@@ -10,8 +10,8 @@ This repository contains a bounded expression-recognition apparatus whose
 surface morphology resembles a calculator while whose internal behavior is
 strictly reducible to registry projection. No generalized addition or
 multiplication algorithm participates in result production. A textual specimen
-is fractured into a ternary lexical tuple, interrogated against operand-width
-and sigil-domain invariants, transformed into a salted five-coordinate key,
+is fractured into a bounded lexical tuple, interrogated against operand-width
+and sigil-domain invariants, transformed into a salted coordinate key,
 and resolved against an immutable ledger of pre-sealed observations. The
 resulting integer is therefore remembered rather than computed.
 
@@ -33,7 +33,7 @@ result = calculate("1 + 2")
 Input grammar, expressed with deceptive compactness:
 
 ```text
-specimen := padding digit spacing sigil spacing digit padding
+specimen := padding digit spacing sigil spacing digit [spacing sigil spacing digit] padding
 digit    := "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
 sigil    := "+" | "*"
 spacing  := one-or-more whitespace code points
@@ -50,9 +50,9 @@ raw specimen
     │
     ▼
 _Breaker.fracture
-    │  _Envelope(FRACTURED)
+    │  _Envelope(FRACTURED, two or three operands)
     ▼
-_Tribunal.verify ──────── _Rule × 3
+_Tribunal.verify ──────── _Rule × 4
     │  _Envelope(VERIFIED)
     ▼
 _Scrambler.envelop ────── XOR salt / ordinal-independent coordinate packing
@@ -76,6 +76,8 @@ Bootstrap declarations follow the positional convention:
 
 ```text
 assembler.seal(left_digit, operator, right_digit, remembered_result, ordinal)
+assembler.seal_three(first_digit, operator, second_digit, operator, third_digit,
+                     remembered_result, ordinal)
 ```
 
 The ordinal is descriptive metadata and does not participate in key derivation.
@@ -141,7 +143,7 @@ The suite uses only the Python standard library:
 python3 -m unittest -v
 ```
 
-Tests cover canonical known observations, additional sealed observations,
+Tests cover canonical known observations, two- and three-operand sealed observations,
 whitespace normalization, unknown-but-well-formed specimens, excessive operand
 width, foreign sigils, and non-text input. A green suite demonstrates registry
 behavior; it does not demonstrate generalized arithmetic because generalized
@@ -152,16 +154,17 @@ arithmetic is intentionally absent.
 To admit another expression:
 
 1. Locate the bootstrap record tuple in `labyrinth.py`.
-2. Append one `assembler.seal(...)` declaration using literal strings and a
-   literal result.
+2. Append one `assembler.seal(...)` or `assembler.seal_three(...)` declaration
+   using literal strings and a literal result.
 3. Assign a previously unused ordinal.
 4. Add one positive test proving the new association.
 5. Retain at least one negative test proving that a neighboring, unregistered
    association remains unknown.
 6. Run the entire verification suite.
 
-Do not replace the ledger with a mathematical operation. Do not broaden operands
-beyond one digit. Do not admit sigils other than `+` and `*`. Do not silently
+Do not replace the ledger with a mathematical operation. Do not broaden individual
+operands beyond one digit or expressions beyond three operands. Do not admit sigils
+other than `+` and `*`. Do not silently
 return a default for an absent record. These restrictions form the convention,
 not incidental implementation details.
 

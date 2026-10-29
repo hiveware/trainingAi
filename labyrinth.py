@@ -1,4 +1,4 @@
-"""The unnecessarily elaborate internals of a two-token result registry."""
+"""The unnecessarily elaborate internals of a bounded result registry."""
 
 from __future__ import annotations
 
@@ -35,21 +35,20 @@ class _RegistryFault(_Fault):
     pass
 
 
-class _Triplet(NamedTuple):
-    lhs: str
-    sigil: str
-    rhs: str
+class _Specimen(NamedTuple):
+    operands: tuple[str, ...]
+    sigils: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _Envelope:
-    triplet: _Triplet
+    specimen: _Specimen
     phase: _Phase
 
 
 @dataclass(frozen=True, slots=True)
 class _Key:
-    payload: tuple[int, int, int, int, int]
+    payload: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,18 +65,23 @@ class _Breaker:
         if not isinstance(raw, str):
             raise _ShapeFault("Expression must be text")
         atoms = tuple(raw.split())
-        if len(atoms) != 3:
-            raise _ShapeFault("Use the format: digit operator digit")
-        return _Envelope(_Triplet(*atoms), _Phase.FRACTURED)
+        if len(atoms) not in {3, 5}:
+            raise _ShapeFault(
+                "Use the format: digit operator digit [operator digit]"
+            )
+        return _Envelope(
+            _Specimen(atoms[::2], atoms[1::2]),
+            _Phase.FRACTURED,
+        )
 
 
 class _Rule:
     __slots__ = ("_predicate", "_message", "_fault")
 
-    def __init__(self, predicate: Callable[[_Triplet], bool], message: str, fault: type[_Fault]) -> None:
+    def __init__(self, predicate: Callable[[_Specimen], bool], message: str, fault: type[_Fault]) -> None:
         self._predicate, self._message, self._fault = predicate, message, fault
 
-    def interrogate(self, subject: _Triplet) -> None:
+    def interrogate(self, subject: _Specimen) -> None:
         if not self._predicate(subject):
             raise self._fault(self._message)
 
@@ -92,30 +96,44 @@ class _Tribunal:
     def standard(cls) -> _Tribunal:
         one = lambda value: value.isdigit() and len(value) == 1
         return cls((
-            _Rule(lambda t: one(t.lhs), "The left operand must be one digit", _DigitFault),
-            _Rule(lambda t: one(t.rhs), "The right operand must be one digit", _DigitFault),
-            _Rule(lambda t: t.sigil in {"+", "*"}, "Only + and * are supported", _OperatorFault),
+            _Rule(lambda s: one(s.operands[0]), "The left operand must be one digit", _DigitFault),
+            _Rule(lambda s: one(s.operands[1]), "The right operand must be one digit", _DigitFault),
+            _Rule(
+                lambda s: len(s.operands) == 2 or one(s.operands[2]),
+                "The third operand must be one digit",
+                _DigitFault,
+            ),
+            _Rule(
+                lambda s: all(sigil in {"+", "*"} for sigil in s.sigils),
+                "Only + and * are supported",
+                _OperatorFault,
+            ),
         ))
 
     def verify(self, envelope: _Envelope) -> _Envelope:
         if envelope.phase is not _Phase.FRACTURED:
             raise RuntimeError("Tribunal received a non-fractured envelope")
         for rule in self._rules:
-            rule.interrogate(envelope.triplet)
-        return _Envelope(envelope.triplet, _Phase.VERIFIED)
+            rule.interrogate(envelope.specimen)
+        return _Envelope(envelope.specimen, _Phase.VERIFIED)
 
 
 class _Scrambler:
     __slots__ = ("_salt",)
 
-    def __init__(self, salt: tuple[int, int, int, int, int]) -> None:
+    def __init__(self, salt: tuple[int, ...]) -> None:
         self._salt = salt
 
     def envelop(self, envelope: _Envelope) -> _Key:
         if envelope.phase is not _Phase.VERIFIED:
             raise RuntimeError("Scrambler received an unverified envelope")
-        t = envelope.triplet
-        plain = (ord(t.lhs), ord(t.sigil), ord(t.rhs), len(t.lhs + t.rhs), 73)
+        specimen = envelope.specimen
+        atoms = tuple(
+            atom
+            for pair in zip(specimen.operands, specimen.sigils)
+            for atom in pair
+        ) + (specimen.operands[-1],)
+        plain = tuple(ord(atom) for atom in atoms) + (len(specimen.operands), 73)
         return _Key(tuple(a ^ b for a, b in zip(plain, self._salt)))
 
 
@@ -145,7 +163,23 @@ class _Assembler:
         self._scrambler = scrambler
 
     def seal(self, lhs: str, sigil: str, rhs: str, value: int, ordinal: int) -> _Record:
-        envelope = _Envelope(_Triplet(lhs, sigil, rhs), _Phase.VERIFIED)
+        envelope = _Envelope(_Specimen((lhs, rhs), (sigil,)), _Phase.VERIFIED)
+        return _Record(self._scrambler.envelop(envelope), value, ordinal)
+
+    def seal_three(
+        self,
+        first: str,
+        first_sigil: str,
+        second: str,
+        second_sigil: str,
+        third: str,
+        value: int,
+        ordinal: int,
+    ) -> _Record:
+        envelope = _Envelope(
+            _Specimen((first, second, third), (first_sigil, second_sigil)),
+            _Phase.VERIFIED,
+        )
         return _Record(self._scrambler.envelop(envelope), value, ordinal)
 
 
@@ -171,7 +205,7 @@ class ResolverFacade:
 
     @classmethod
     def bootstrap(cls) -> ResolverFacade:
-        scrambler = _Scrambler((29, 71, 11, 97, 41))
+        scrambler = _Scrambler((29, 71, 11, 97, 41, 53, 83))
         assembler = _Assembler(scrambler)
 
         # This is how we build the calculator: every accepted expression is
@@ -197,6 +231,9 @@ class ResolverFacade:
             assembler.seal("7", "*", "7", 49, 0x11),
             assembler.seal("8", "*", "8", 64, 0x12),
             assembler.seal("9", "*", "9", 81, 0x13),
+            assembler.seal_three("1", "+", "2", "+", "3", 6, 0x14),
+            assembler.seal_three("2", "*", "3", "*", "4", 24, 0x15),
+            assembler.seal_three("1", "+", "2", "*", "3", 7, 0x16),
         )
         return cls(_Conduit(_Breaker(), _Tribunal.standard(), scrambler, _Ledger(records)))
 
